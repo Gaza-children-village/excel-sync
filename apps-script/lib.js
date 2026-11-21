@@ -5,7 +5,7 @@
  */
 
 var SYNC_TAB = "_sync";
-var MAX_SCHOOL_CODE = 20;
+var MIN_KEY_LENGTH = 32;
 
 /**
  * One value from Excel -> what setValues() must receive.
@@ -64,15 +64,35 @@ function parseEmails(text) {
   return seen;
 }
 
+/** GCV01 ... GCV99 (GCV00 is not a school). */
 function isSchoolCode(code) {
-  return typeof code === "string" && code.length > 0 && code.length <= MAX_SCHOOL_CODE && /^[A-Za-z0-9-]+$/.test(code);
+  return typeof code === "string" && /^GCV\d{2}$/.test(code) && code !== "GCV00";
+}
+
+/**
+ * What a sync with this key may do for this school:
+ *   "ok"        the school is linked to this PC (same key hash)
+ *   "taken"     the school is linked to another PC
+ *   "claim"     the school exists but was unlinked by the admin: link it to this PC
+ *   "register"  new school and registration is open: create its Sheet, link this PC
+ *   "closed"    new school but registration is closed
+ */
+function accessDecision(school, keyHash, registrationOpen) {
+  if (!school) return registrationOpen ? "register" : "closed";
+  if (!school.keyHash) return "claim";
+  return sameText(school.keyHash, keyHash) ? "ok" : "taken";
+}
+
+/** A script property used as a switch: "true", "yes" or "1" means on. */
+function isOn(value) {
+  return /^(true|yes|1)$/i.test(String(value || "").trim());
 }
 
 /** "" when the payload can be written, otherwise the reason. */
 function checkPayload(p) {
   if (!p || typeof p !== "object") return "The request is not a JSON object.";
   if (!isSchoolCode(p.school)) return "Invalid school code.";
-  if (typeof p.key !== "string" || p.key === "") return "The key is missing.";
+  if (typeof p.key !== "string" || p.key.length < MIN_KEY_LENGTH) return "The key is missing or too short.";
   if (!Array.isArray(p.sheets) || p.sheets.length === 0) return "No sheets were sent.";
   var names = [];
   for (var i = 0; i < p.sheets.length; i++) {

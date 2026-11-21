@@ -60,25 +60,51 @@ test("emails are read from a comma or space separated list, lower case, no dupli
   assert.deepEqual(JSON.parse(JSON.stringify(lib.parseEmails(""))), []);
 });
 
-test("school codes are short letters, digits and dashes", () => {
-  assert.equal(lib.isSchoolCode("S03"), true);
-  assert.equal(lib.isSchoolCode("gaza-north-1"), true);
+test("school codes are GCV and two digits (GCV01 ... GCV99)", () => {
+  assert.equal(lib.isSchoolCode("GCV05"), true);
+  assert.equal(lib.isSchoolCode("GCV21"), true);
+  assert.equal(lib.isSchoolCode("GCV00"), false);
+  assert.equal(lib.isSchoolCode("gcv05"), false);
+  assert.equal(lib.isSchoolCode("GCV5"), false);
+  assert.equal(lib.isSchoolCode("S03"), false);
   assert.equal(lib.isSchoolCode(""), false);
-  assert.equal(lib.isSchoolCode("S 03"), false);
-  assert.equal(lib.isSchoolCode("x".repeat(21)), false);
+  assert.equal(lib.isSchoolCode(5), false);
 });
 
 test("a payload is checked before anything is written", () => {
-  const good = { school: "S03", key: "k", workbook: "f.xlsx", sheets: [{ name: "Students", rows: [["a"]] }] };
+  const good = { school: "GCV03", key: "a".repeat(64), workbook: "f.xlsx", sheets: [{ name: "Students", rows: [["a"]] }] };
   assert.equal(lib.checkPayload(good), "");
   assert.match(lib.checkPayload(null), /JSON/);
-  assert.match(lib.checkPayload({ ...good, school: "S 03" }), /school/);
+  assert.match(lib.checkPayload({ ...good, school: "S03" }), /school/);
   assert.match(lib.checkPayload({ ...good, key: "" }), /key/);
+  assert.match(lib.checkPayload({ ...good, key: "short" }), /key/);
   assert.match(lib.checkPayload({ ...good, sheets: [] }), /sheets/);
   assert.match(lib.checkPayload({ ...good, sheets: [{ name: "", rows: [] }] }), /name/);
   assert.match(lib.checkPayload({ ...good, sheets: [{ name: "_sync", rows: [] }] }), /_sync/);
   assert.match(lib.checkPayload({ ...good, sheets: [{ name: "A", rows: [] }, { name: "a", rows: [] }] }), /twice/);
   assert.match(lib.checkPayload({ ...good, sheets: [{ name: "A", rows: "x" }] }), /rows/);
+});
+
+test("access: the linked PC syncs, another PC is refused", () => {
+  assert.equal(lib.accessDecision({ keyHash: "h1" }, "h1", false), "ok");
+  assert.equal(lib.accessDecision({ keyHash: "h1" }, "h2", true), "taken");
+});
+
+test("access: a new school is registered only while registration is open", () => {
+  assert.equal(lib.accessDecision(null, "h1", true), "register");
+  assert.equal(lib.accessDecision(null, "h1", false), "closed");
+});
+
+test("access: an unlinked school is claimed by the next PC, even with registration closed", () => {
+  assert.equal(lib.accessDecision({ keyHash: "" }, "h1", false), "claim");
+});
+
+test("switches in script properties", () => {
+  assert.equal(lib.isOn("true"), true);
+  assert.equal(lib.isOn(" YES "), true);
+  assert.equal(lib.isOn("1"), true);
+  assert.equal(lib.isOn("false"), false);
+  assert.equal(lib.isOn(null), false);
 });
 
 test("the school name check accepts the first name and refuses another one", () => {

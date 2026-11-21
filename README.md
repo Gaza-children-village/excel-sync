@@ -11,8 +11,8 @@ Excel add-in (`GCV Sync.xlam`) that copies a school's GCV Administration workboo
 
 | Button | What it does |
 |---|---|
-| **مزامنة الملف الآن** (sync now) | Sends the values of every sheet of the active GCV workbook to the school's Google Sheet, then offers to open it |
-| **إعدادات المزامنة** (sync settings) | Web-app link, school code and key, entered once per PC (given by the technical manager) |
+| **مزامنة الملف الآن** (sync now) | Sends the values of every sheet of the active GCV workbook to the school's Google Sheet |
+| **إعدادات المزامنة** (sync settings) | The school number, entered once per PC (`5` → `GCV05`). Asked automatically at the first sync |
 
 ## How it works
 
@@ -24,10 +24,11 @@ Excel add-in (`GCV Sync.xlam`) that copies a school's GCV Administration workboo
 
 ## Access and privacy
 
-- One Google Sheet per school, created and owned by the GCV Google account.
-- Every request needs the school's own key; the script stores only its SHA-256 hash. The key is kept per PC in the registry, never in the workbook.
+- One Google Sheet per school (`GCV01` … `GCV99`), created by the school's first sync and owned by the GCV Google account. Secretaries do not need access to it; a central file of the GCV account can read it with `IMPORTRANGE`.
+- **Each school is linked to one PC.** The add-in makes a random 64-character key on the PC (kept in the registry, never shown or typed). The first sync of a school links the school to that key; the script stores only its SHA-256 hash. Syncs of that school from another PC are refused.
+- New schools can link themselves only while the script property `REGISTRATION_OPEN` is `true`. The web-app link is built into the add-in and the repository is public, so keep registration closed outside setup.
 - A file of another school is refused: the first sync records the workbook's `SCHOOL_NAME`; a different name is not accepted.
-- On every sync the sharing is reset: only the admins (`ADMIN_EMAILS`) and that school's secretary can edit, link sharing is off, and editors cannot share further.
+- On every sync the sharing is reset: only `ADMIN_EMAILS` (optional) and the school's editors (`setEditors`, optional) can edit, link sharing is off, and editors cannot share further.
 - The add-in's logs contain counts and results, never data.
 
 ## Google setup (once, in the GCV Google account)
@@ -36,12 +37,22 @@ Excel add-in (`GCV Sync.xlam`) that copies a school's GCV Administration workboo
 2. **Project:** [script.google.com](https://script.google.com) › New project, name it *GCV Sync*. Create the files `lib.gs` and `Code.gs` with the contents of [`apps-script/lib.js`](apps-script/lib.js) and [`apps-script/Code.js`](apps-script/Code.js). In Project Settings tick *Show "appsscript.json"* and replace it with [`apps-script/appsscript.json`](apps-script/appsscript.json). (Or push the folder with [clasp](https://github.com/google/clasp).)
 3. **Properties:** Project Settings › Script properties:
    - `FOLDER_ID`: the folder ID
-   - `ADMIN_EMAILS`: admin addresses, comma-separated
-4. **Deploy:** Deploy › New deployment › *Web app*, Execute as **Me**, Who has access **Anyone**. Authorise, then copy the link ending in `/exec`.
-5. **Each school:** in `Code.gs` edit `addSchoolFromEditor` (code, name, secretary e-mail), select it and press **Run**. The execution log shows the Sheet's link and the school's **KEY** (shown once).
-6. **Each school PC:** GCV tab › **إعدادات المزامنة**: the `/exec` link, the school code and the key. Then **مزامنة الملف الآن**.
+   - `REGISTRATION_OPEN`: `true` while the schools set up their PCs, then `false`
+   - `ADMIN_EMAILS` (optional): accounts that may edit every school Sheet, comma-separated
+4. **Deploy:** Deploy › New deployment › *Web app*, Execute as **Me**, Who has access **Anyone**. Authorise, then copy the link ending in `/exec` into `SYNC_URL` in `src/SyncCore.bas`.
+5. **Each school PC:** GCV tab › **مزامنة الملف الآن**. The first time, the add-in asks for the school number; the first sync creates the school's Sheet and links the school to the PC.
+6. When every school has synced once: set `REGISTRATION_OPEN` to `false`. Check with `listSchools()`.
 
-Maintenance (run from the editor): `setEditors("S03", "new.secretary@…")` when the secretary changes, `resetKey("S03")` when a PC is lost, `clearSchoolName("S03")` when a school is renamed, `listSchools()` for an overview. After changing the script: Deploy › Manage deployments › edit › *New version* (the link stays the same).
+**Updating the script:** Deploy › Manage deployments › edit › Version: *New version*. The link stays the same. A *new deployment* would get a new link, and every PC would need a new add-in version.
+
+**Maintenance** (run from the editor; the Run button cannot pass values, so edit the call in the `…FromEditor` function first):
+
+| Function | When |
+|---|---|
+| `listSchools()` | Overview: schools, names, Sheet links, unlinked schools |
+| `unlinkSchool("GCV05")` | New or replaced PC, Windows profile reset, or a secretary typed the wrong number. The next sync for GCV05 links its PC, even with registration closed |
+| `setEditors("GCV05", "a@gmail.com")` | Optional: let someone edit that school's Sheet (`""` removes all) |
+| `clearSchoolName("GCV05")` | The school was renamed in the workbook |
 
 ## Requirements
 
@@ -89,8 +100,8 @@ The Apps Script helpers are tested with Node: `cd apps-script && node --test` (a
 
 | File | Purpose |
 |---|---|
-| `src/SyncUi.bas` | Ribbon, settings, messages |
-| `src/SyncCore.bas` | Building the request (JSON, values, dates, school name), answers, settings |
+| `src/SyncUi.bas` | Ribbon, settings (school number), messages |
+| `src/SyncCore.bas` | Web-app link (`SYNC_URL`), PC key, school codes, building the request (JSON, values, dates, school name), answers |
 | `src/ISyncTarget.cls`, `src/GoogleScriptTarget.cls`, `src/SyncResult.cls` | Where a sync goes (Google now, GCV server later) |
 | `src/UpdJson.bas`, `src/GcvLogClient.bas`, `src/GcvAddin.bas` | JSON reader; logging through GCV Logger; identity of the add-in |
 | `src/TestSync.bas`, `src/FakeSyncTarget.cls` | Tests (development only) |

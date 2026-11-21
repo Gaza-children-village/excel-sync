@@ -5,7 +5,7 @@ Option Explicit
 ' GCV Sync - building the request (no user interface; tested).
 '
 ' Payload (UTF-8 JSON):
-'   {"school": "S03", "key": "...", "schoolName": "<SCHOOL_NAME of the workbook>",
+'   {"school": "GCV03", "key": "<PC key>", "schoolName": "<SCHOOL_NAME of the workbook>",
 '    "workbook": "file.xlsx", "addinVersion": "0.1.0",
 '    "sheets": [{"name": "...", "rightToLeft": true, "rows": [[...], ...]}, ...]}
 ' Values only (formula results). Dates as {"$d": "yyyy-mm-dd[Thh:nn:ss]"},
@@ -13,8 +13,22 @@ Option Explicit
 ' at the end of a sheet are left out. Very hidden sheets are not sent.
 ' ============================================================================
 
+' The GCV Sync web app (Apps Script deployment of the GCV account). Keep the
+' link: update the deployment with Manage deployments > Edit > New version.
+Public Const SYNC_URL As String = "https://script.google.com/macros/s/AKfycbzDYVgHCGV9r9-_awcDaRHDwiIn1tunIHm8Z93AR8HVeCfSWJ6SmJVLSZPgw-DYW5v7/exec"
+
 Public Const SETTINGS_APP As String = "GCV Tools"
 Public Const SETTINGS_SECTION As String = "Sync"
+Private Const KEY_LENGTH As Long = 64
+
+Private Type GuidParts
+    Data1 As Long
+    Data2 As Integer
+    Data3 As Integer
+    Data4(0 To 7) As Byte
+End Type
+
+Private Declare PtrSafe Function CoCreateGuid Lib "ole32" (ByRef g As GuidParts) As Long
 Private Const TEMPLATE_NAME As String = "GCV_TEMPLATE"
 Private Const SCHOOL_NAME_NAME As String = "SCHOOL_NAME"
 
@@ -243,11 +257,13 @@ Public Function ParseAnswer(ByVal status As Long, ByVal text As String) As SyncR
     On Error GoTo 0
     If JsonBool(answer, "ok") Then
         result.Outcome = soOk
+        result.Registered = JsonBool(answer, "registered")
         result.SheetUrl = JsonStr(answer, "url")
         result.SheetCount = Val(JsonStr(answer, "sheets"))
         result.RowCount = Val(JsonStr(answer, "rows"))
     Else
         result.Outcome = soRejected
+        result.ErrorCode = JsonStr(answer, "code")
         result.Message = JsonStr(answer, "error")
     End If
     Set ParseAnswer = result
@@ -289,11 +305,63 @@ Public Sub SaveSettingValue(ByVal key As String, ByVal value As String)
     SaveSetting SETTINGS_APP, SETTINGS_SECTION, key, value
 End Sub
 
+' GCV01 ... GCV99.
 Public Function IsSchoolCode(ByVal code As String) As Boolean
-    If Len(code) = 0 Or Len(code) > 20 Then Exit Function
-    IsSchoolCode = Not (code Like "*[!A-Za-z0-9-]*")
+    IsSchoolCode = (code Like "GCV##") And code <> "GCV00"
+End Function
+
+' What the secretary typed -> school code: "5", "05", "gcv5" and "GCV05" all
+' give "GCV05". "" when it is not a school number from 1 to 99.
+Public Function SchoolCodeFromInput(ByVal text As String) As String
+    Dim digits As String
+    digits = Trim$(text)
+    If UCase$(Left$(digits, 3)) = "GCV" Then digits = Trim$(Mid$(digits, 4))
+    If Len(digits) = 0 Or Len(digits) > 2 Then Exit Function
+    If digits Like "*[!0-9]*" Then Exit Function
+    If CLng(digits) < 1 Then Exit Function
+    SchoolCodeFromInput = "GCV" & Format$(CLng(digits), "00")
 End Function
 
 Public Function IsWebAppUrl(ByVal url As String) As Boolean
     IsWebAppUrl = (url Like "https://script.google.com/macros/s/*/exec")
+End Function
+
+' The web app link: SYNC_URL, unless a test link is set in the registry
+' (GCV Tools\Sync\Url, for the technical manager only).
+Public Function SyncUrl() As String
+    SyncUrl = SettingValue("Url")
+    If Not IsWebAppUrl(SyncUrl) Then SyncUrl = SYNC_URL
+End Function
+
+' This PC's sync key: made once, kept in the registry, never shown. The first
+' sync of a school links the school to it.
+Public Function DeviceKey() As String
+    DeviceKey = SettingValue("Key")
+    If Not IsDeviceKey(DeviceKey) Then
+        DeviceKey = NewDeviceKey()
+        SaveSettingValue "Key", DeviceKey
+    End If
+End Function
+
+Public Function IsDeviceKey(ByVal key As String) As Boolean
+    IsDeviceKey = (Len(key) = KEY_LENGTH) And Not (key Like "*[!0-9a-f]*")
+End Function
+
+' 64 hex characters from two random GUIDs.
+Public Function NewDeviceKey() As String
+    Dim g As GuidParts
+    Dim i As Long
+    Dim k As Long
+    For k = 1 To 2
+        If CoCreateGuid(g) <> 0 Then Err.Raise vbObjectError + 600, "GCV Sync", "No random key could be made."
+        NewDeviceKey = NewDeviceKey & Hex8(g.Data1) & Right$("0000" & Hex$(g.Data2), 4) & Right$("0000" & Hex$(g.Data3), 4)
+        For i = 0 To 7
+            NewDeviceKey = NewDeviceKey & Right$("0" & Hex$(g.Data4(i)), 2)
+        Next i
+    Next k
+    NewDeviceKey = LCase$(NewDeviceKey)
+End Function
+
+Private Function Hex8(ByVal value As Long) As String
+    Hex8 = Right$("00000000" & Hex$(value), 8)
 End Function

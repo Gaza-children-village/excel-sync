@@ -22,6 +22,8 @@ Public Sub RunSyncTests()
     Test_JsonValue_NumbersDatesBooleansErrors
     Test_ParseAnswer_ReadsSuccessRefusalAndErrors
     Test_Codes_And_Urls
+    Test_SchoolNumberTyped_BecomesGcvCode
+    Test_DeviceKey_IsRandomHex
 
     Set wb = TestWorkbook()
     Test_SheetJson_KeepsTextIdsDatesAndTrimsEmptyCells wb
@@ -75,23 +77,57 @@ Private Sub Test_ParseAnswer_ReadsSuccessRefusalAndErrors()
     StartTest "Answers of the web app"
     Set r = ParseAnswer(200, "{""ok"": true, ""sheets"": 8, ""rows"": 420, ""url"": ""https://docs.google.com/s""}")
     AssertEqual soOk, r.Outcome, "ok"
+    AssertEqual False, r.Registered, "not a first sync"
     AssertEqual 8, r.SheetCount, "sheets"
     AssertEqual 420, r.RowCount, "rows"
     AssertEqual "https://docs.google.com/s", r.SheetUrl, "url"
     Set r = ParseAnswer(200, "{""ok"": false, ""error"": ""Unknown school or wrong key.""}")
     AssertEqual soRejected, r.Outcome, "refused"
     AssertEqual "Unknown school or wrong key.", r.Message, "reason"
+    Set r = ParseAnswer(200, "{""ok"": true, ""registered"": true, ""sheets"": 1, ""rows"": 1}")
+    AssertEqual True, r.Registered, "first sync links the PC"
+    Set r = ParseAnswer(200, "{""ok"": false, ""code"": ""school-taken"", ""error"": ""School GCV05 is linked to another computer.""}")
+    AssertEqual "school-taken", r.ErrorCode, "refusal code"
     AssertEqual soHttpError, ParseAnswer(500, "").Outcome, "HTTP error"
     AssertEqual soHttpError, ParseAnswer(200, "<html>sign in</html>").Outcome, "not JSON"
 End Sub
 
 Private Sub Test_Codes_And_Urls()
     StartTest "School codes and web-app links"
-    AssertEqual True, IsSchoolCode("S03"), "code"
-    AssertEqual False, IsSchoolCode("S 03"), "space"
+    AssertEqual True, IsSchoolCode("GCV05"), "code"
+    AssertEqual True, IsSchoolCode("GCV21"), "code 21"
+    AssertEqual False, IsSchoolCode("GCV00"), "no school 00"
+    AssertEqual False, IsSchoolCode("GCV5"), "one digit"
+    AssertEqual False, IsSchoolCode("S03"), "old style"
     AssertEqual True, IsWebAppUrl("https://script.google.com/macros/s/AKfy123/exec"), "link"
     AssertEqual False, IsWebAppUrl("https://script.google.com/macros/s/AKfy123/dev"), "test link"
     AssertEqual False, IsWebAppUrl("http://example.org/exec"), "other site"
+End Sub
+
+Private Sub Test_SchoolNumberTyped_BecomesGcvCode()
+    StartTest "The secretary types the school number"
+    AssertEqual "GCV05", SchoolCodeFromInput("5"), "5"
+    AssertEqual "GCV05", SchoolCodeFromInput(" 05 "), "05"
+    AssertEqual "GCV07", SchoolCodeFromInput("gcv7"), "gcv7"
+    AssertEqual "GCV21", SchoolCodeFromInput("GCV21"), "GCV21"
+    AssertEqual "", SchoolCodeFromInput("0"), "0"
+    AssertEqual "", SchoolCodeFromInput("100"), "100"
+    AssertEqual "", SchoolCodeFromInput("5.5"), "5.5"
+    AssertEqual "", SchoolCodeFromInput("abc"), "text"
+    AssertEqual "", SchoolCodeFromInput(""), "empty"
+End Sub
+
+Private Sub Test_DeviceKey_IsRandomHex()
+    Dim a As String
+    Dim b As String
+    StartTest "The PC key is 64 random hex characters"
+    a = NewDeviceKey()
+    b = NewDeviceKey()
+    AssertEqual 64, Len(a), "length"
+    AssertEqual True, IsDeviceKey(a), "hex"
+    AssertEqual False, (a = b), "different every time"
+    AssertEqual False, IsDeviceKey(UCase$(a)), "lower case only"
+    AssertEqual False, IsDeviceKey("abc"), "too short"
 End Sub
 
 ' ----------------------------------------------------------------------------
@@ -122,7 +158,7 @@ Private Sub Test_RunSync_RefusesNonGcvWorkbooks(ByVal wb As Workbook)
     StartTest "Only GCV workbooks are synced"
     Set fake = New FakeSyncTarget
     Set other = Workbooks.Add(xlWBATWorksheet)
-    AssertEqual soNotGcvWorkbook, RunSync(other, fake, "S03", "k").Outcome, "refused"
+    AssertEqual soNotGcvWorkbook, RunSync(other, fake, "GCV03", "k").Outcome, "refused"
     AssertEqual 0, fake.Calls, "nothing sent"
     other.Close SaveChanges:=False
     AssertEqual soNotConfigured, RunSync(wb, fake, "", "").Outcome, "no settings"
@@ -133,9 +169,9 @@ Private Sub Test_RunSync_SendsSchoolKeyNameAndSheets(ByVal wb As Workbook)
     Dim payload As Object
     StartTest "The payload names the school, its key, the school name and every sheet"
     Set fake = New FakeSyncTarget
-    AssertEqual soOk, RunSync(wb, fake, "S03", "secret-key").Outcome, "ok"
+    AssertEqual soOk, RunSync(wb, fake, "GCV03", "secret-key").Outcome, "ok"
     Set payload = JsonParse(fake.LastPayload)
-    AssertEqual "S03", JsonStr(payload, "school"), "school"
+    AssertEqual "GCV03", JsonStr(payload, "school"), "school"
     AssertEqual "secret-key", JsonStr(payload, "key"), "key"
     AssertEqual FromCodePoints("0645 062F 0631 0633 0629 0020 0627 0644 0627 062E 062A 0628 0627 0631"), JsonStr(payload, "schoolName"), "school name"
     AssertEqual 2, JsonObj(payload, "sheets").Count, "sheets"
@@ -147,10 +183,10 @@ Private Sub Test_RunSync_ReportsOfflineAndRefusal(ByVal wb As Workbook)
     StartTest "Offline and refused syncs are reported"
     Set fake = New FakeSyncTarget
     fake.Offline = True
-    AssertEqual soOffline, RunSync(wb, fake, "S03", "k").Outcome, "offline"
+    AssertEqual soOffline, RunSync(wb, fake, "GCV03", "k").Outcome, "offline"
     fake.Offline = False
     fake.AnswerText = "{""ok"": false, ""error"": ""This file belongs to another school.""}"
-    AssertEqual soRejected, RunSync(wb, fake, "S03", "k").Outcome, "refused"
+    AssertEqual soRejected, RunSync(wb, fake, "GCV03", "k").Outcome, "refused"
 End Sub
 
 ' ----------------------------------------------------------------------------
